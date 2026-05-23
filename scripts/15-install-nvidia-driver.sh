@@ -29,6 +29,20 @@ install_optional_nvidia_smi_package
 
 log "Post-install nvidia-smi status"
 print_nvidia_smi_status
+log "Post-install GPU/driver support assessment"
+print_driver_support_assessment
+verdict="$(driver_support_verdict)"
+if [[ "$verdict" == "too-old-heuristic" || "$verdict" == "unsupported-by-kernel-log" ]]; then
+  warn "Packages installed successfully, but this driver branch does not support your GPU."
+  bp_ver="$(apt_package_version_from_suite nvidia-driver 'trixie-backports/.*/non-free')"
+  if [[ -n "$bp_ver" ]]; then
+    warn "A newer backports NVIDIA branch appears available: $bp_ver"
+    warn "You can try: sudo ./scripts/16-switch-to-backports.sh"
+  else
+    warn "No newer backports NVIDIA version detected from current apt metadata."
+  fi
+  print_external_nvidia_guidance
+fi
 
 cat <<MSG
 

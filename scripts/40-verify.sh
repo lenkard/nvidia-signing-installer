@@ -4,6 +4,8 @@ source "$(dirname "$0")/../helpers/common.sh"
 
 log "Verify Secure Boot and module state"
 log "Secure Boot: $(secure_boot_state | tr '\n' ' ' | sed 's/  */ /g')"
+log "GPU/driver support assessment:"
+print_driver_support_assessment
 
 for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
   path="$(module_path_or_empty "$mod")"
@@ -48,6 +50,6 @@ else
 fi
 
 log "Recent relevant kernel messages:"
-dmesg -T | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau' | tail -n 200 || true
+dmesg -T | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau|not supported by the NVIDIA' | tail -n 200 || true
 
 log "Verification complete. Log saved to $LOG_FILE"

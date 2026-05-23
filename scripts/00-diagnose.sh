@@ -28,6 +28,9 @@ else
   warn "No nvidia-driver apt candidate detected. Check apt sources and non-free/non-free-firmware components."
 fi
 
+log "GPU/driver support assessment:"
+print_driver_support_assessment
+
 log "Loaded NVIDIA modules:"
 lsmod | grep '^nvidia' || true
 
@@ -60,10 +63,10 @@ if command_exists mokutil; then
 fi
 
 log "Recent kernel messages matching secure/nvidia/mok/lockdown:"
-dmesg -T | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau' | tail -n 200 || true
+dmesg -T | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau|not supported by the NVIDIA' | tail -n 200 || true
 
 log "journalctl kernel messages matching secure/nvidia/mok/lockdown:"
-journalctl -k -b 0 | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau' | tail -n 200 || true
+journalctl -k -b 0 | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau|not supported by the NVIDIA' | tail -n 200 || true
 
 log "nvidia-smi presence/package status:"
 print_nvidia_smi_status

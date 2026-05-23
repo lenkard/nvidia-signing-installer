@@ -45,6 +45,14 @@ apt_candidate_version() {
   apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}'
 }
 
+apt_package_version_from_suite() {
+  local pkg="$1" suite_pattern="$2"
+  apt-cache policy "$pkg" 2>/dev/null | awk -v pat="$suite_pattern" '
+    /^[[:space:]]+[0-9]/ { ver=$1 }
+    $0 ~ pat && ver != "" { print ver; exit }
+  '
+}
+
 installed_package_version() {
   dpkg-query -W -f='${Version}\n' "$1" 2>/dev/null || true
 }
@@ -61,6 +69,10 @@ version_major() {
 
 gpu_summary() {
   lspci -nn | grep -Ei 'vga|3d|display' || true
+}
+
+gpu_pci_ids() {
+  lspci -nn | sed -nE 's/.*\[10de:([0-9a-fA-F]{4})\].*/10de:\1/p'
 }
 
 secure_boot_state() {
@@ -105,22 +117,31 @@ module_path_for_kernel_or_empty() {
   modinfo -k "$kernel" -n "$mod" 2>/dev/null || true
 }
 
+module_basename_candidates() {
+  local name="$1"
+  case "$name" in
+    nvidia) printf '%s\n' nvidia nvidia-current ;;
+    nvidia-modeset) printf '%s\n' nvidia-modeset nvidia-current-modeset ;;
+    nvidia-drm) printf '%s\n' nvidia-drm nvidia-current-drm ;;
+    nvidia-uvm) printf '%s\n' nvidia-uvm nvidia-current-uvm ;;
+    nvidia-peermem) printf '%s\n' nvidia-peermem nvidia-current-peermem ;;
+    *) return 1 ;;
+  esac
+}
+
 module_install_path() {
   module_install_path_for "$1" "$TARGET_KERNEL"
 }
 
 module_install_path_for() {
-  local name="$1"
-  local kernel="$2"
-  local base="/lib/modules/$kernel/updates/dkms"
-  case "$name" in
-    nvidia) echo "$base/nvidia.ko.xz" ;;
-    nvidia-modeset) echo "$base/nvidia-modeset.ko.xz" ;;
-    nvidia-drm) echo "$base/nvidia-drm.ko.xz" ;;
-    nvidia-uvm) echo "$base/nvidia-uvm.ko.xz" ;;
-    nvidia-peermem) echo "$base/nvidia-peermem.ko.xz" ;;
-    *) return 1 ;;
-  esac
+  local name="$1" kernel="$2" base path candidate
+  base="/lib/modules/$kernel/updates/dkms"
+  while IFS= read -r candidate; do
+    for path in "$base/$candidate.ko.xz" "$base/$candidate.ko"; do
+      [[ -e "$path" ]] && { echo "$path"; return 0; }
+    done
+  done < <(module_basename_candidates "$name")
+  echo "$base/$(module_basename_candidates "$name" | head -n1).ko.xz"
 }
 
 has_module_file() {
@@ -131,6 +152,7 @@ has_module_file() {
 xz_module_is_valid() {
   local p="$1"
   [[ -e "$p" ]] || return 1
+  [[ "$p" != *.xz ]] && return 0
   xz -t "$p" >/dev/null 2>&1
 }
 
@@ -141,17 +163,14 @@ modinfo_file_works() {
 }
 
 sign_module_file() {
-  local kernel="$1"
-  local file="$2"
+  local kernel="$1" file="$2"
   ensure_sign_file_for "$kernel"
   [[ -f "$PROJECT_DIR/MOK.priv" && -f "$PROJECT_DIR/MOK.der" ]] || die "MOK.priv and MOK.der must exist in $PROJECT_DIR."
   "$(kernel_headers_path_for "$kernel")" sha256 "$PROJECT_DIR/MOK.priv" "$PROJECT_DIR/MOK.der" "$file"
 }
 
 sign_installed_module_for_kernel() {
-  local kernel="$1"
-  local module="$2"
-  local path tmp
+  local kernel="$1" module="$2" path tmp
   path="$(module_install_path_for "$module" "$kernel" 2>/dev/null || true)"
   [[ -n "$path" && -e "$path" ]] || { warn "Installed module file not found for $module on $kernel"; return 1; }
   if [[ "$path" == *.xz ]]; then
@@ -170,9 +189,8 @@ remove_installed_nvidia_modules() {
 }
 
 remove_installed_nvidia_modules_for_kernel() {
-  local kernel="$1"
-  local removed=0
-  local base="/lib/modules/$kernel/updates/dkms"
+  local kernel="$1" removed=0 base
+  base="/lib/modules/$kernel/updates/dkms"
   if [[ -d "$base" ]]; then
     while IFS= read -r -d '' file; do
       log "Removing installed module file: $file"
@@ -213,8 +231,7 @@ confirm_or_die() {
 }
 
 migrate_existing_file() {
-  local path="$1"
-  local backup_dir="$PROJECT_DIR/backups/$TIMESTAMP"
+  local path="$1" backup_dir="$PROJECT_DIR/backups/$TIMESTAMP"
   if [[ -e "$path" ]]; then
     mkdir -p "$backup_dir"
     mv "$path" "$backup_dir/"
@@ -223,15 +240,58 @@ migrate_existing_file() {
 }
 
 nvidia_pkg_major_warning() {
-  local candidate
+  local candidate major
   candidate="$(apt_candidate_version nvidia-driver || true)"
   if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-    local major
     major="$(version_major "$candidate")"
     if [[ "$major" -lt 570 ]]; then
       warn "Debian candidate nvidia-driver ($candidate) appears older than 570. RTX 5070 Ti / Blackwell may not be supported well or at all."
     fi
   fi
+}
+
+likely_gpu_requires_newer_branch() {
+  local id
+  while IFS= read -r id; do
+    case "$id" in
+      10de:2c05) return 0 ;;
+    esac
+  done < <(gpu_pci_ids)
+  return 1
+}
+
+driver_support_verdict() {
+  local installed major
+  installed="$(installed_package_version nvidia-driver)"
+  if [[ -z "$installed" ]]; then
+    echo "missing-driver-package"
+    return 0
+  fi
+  major="$(version_major "$installed")"
+  if likely_gpu_requires_newer_branch && [[ "$major" -lt 570 ]]; then
+    echo "too-old-heuristic"
+    return 0
+  fi
+  if journalctl -k -b 0 2>/dev/null | grep -q 'not supported by the NVIDIA .* driver release'; then
+    echo "unsupported-by-kernel-log"
+    return 0
+  fi
+  echo "ok"
+}
+
+print_driver_support_assessment() {
+  local verdict installed ids
+  verdict="$(driver_support_verdict)"
+  installed="$(installed_package_version nvidia-driver)"
+  ids="$(gpu_pci_ids | tr '\n' ' ')"
+  echo "detected_gpu_pci_ids: ${ids:-none}"
+  echo "installed_nvidia_driver: ${installed:-none}"
+  echo "driver_support_verdict: $verdict"
+  case "$verdict" in
+    too-old-heuristic|unsupported-by-kernel-log)
+      warn "Packages installed successfully, but this driver branch does not support your GPU."
+      ;;
+  esac
 }
 
 print_manual_mok_steps() {
@@ -288,8 +348,7 @@ apt_package_available() {
 }
 
 ensure_target_kernel_and_headers() {
-  local kernel="$1"
-  local image_pkg headers_pkg
+  local kernel="$1" image_pkg headers_pkg
   image_pkg="$(kernel_package_name "$kernel")"
   headers_pkg="$(headers_package_name "$kernel")"
   apt-get update
@@ -324,11 +383,8 @@ ensure_mok_files_or_maybe_unsigned() {
 }
 
 verify_target_kernel_modules() {
-  local kernel="$1"
-  local require_signing="$2"
-  local failed=0
+  local kernel="$1" require_signing="$2" failed=0 installed_path
   for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
-    local installed_path
     installed_path="$(module_install_path_for "$mod" "$kernel" 2>/dev/null || true)"
     if [[ -z "$installed_path" || ! -e "$installed_path" ]]; then
       warn "Expected installed module missing for $mod on $kernel"
@@ -356,4 +412,30 @@ verify_target_kernel_modules() {
     failed=1
   fi
   return "$failed"
+}
+
+install_nvidia_from_backports() {
+  require_root
+  apt-get update
+  if ! apt_package_available nvidia-driver; then
+    die "No nvidia-driver package available from configured apt sources."
+  fi
+  local bp_ver
+  bp_ver="$(apt_package_version_from_suite nvidia-driver 'trixie-backports/.*/non-free')"
+  if [[ -z "$bp_ver" ]]; then
+    die "No backports nvidia-driver version detected. Ensure trixie-backports non-free is enabled."
+  fi
+  log "Installing NVIDIA packages from trixie-backports: $bp_ver"
+  apt-get install -y -t trixie-backports \
+    nvidia-driver nvidia-kernel-dkms nvidia-driver-libs nvidia-smi nvidia-settings
+}
+
+print_external_nvidia_guidance() {
+  cat <<'MSG'
+External/upstream NVIDIA guidance:
+- Prefer Debian stable or Debian backports first.
+- If your GPU is still unsupported, consider newer official NVIDIA packages or installer only as a last resort.
+- Mixing Debian-packaged NVIDIA with upstream .run installations can break DKMS/module paths.
+- If you use upstream packages, purge Debian NVIDIA packages first and document the change.
+MSG
 }

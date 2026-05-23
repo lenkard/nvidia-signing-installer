@@ -26,6 +26,16 @@ nvidia_pkg_major_warning
 install_optional_nvidia_smi_package
 ensure_mok_files_or_maybe_unsigned "$allow_unsigned"
 
+verdict="$(driver_support_verdict)"
+if [[ "$verdict" == "too-old-heuristic" || "$verdict" == "unsupported-by-kernel-log" ]]; then
+  warn "Packages installed successfully, but this driver branch does not support your GPU."
+  bp_ver="$(apt_package_version_from_suite nvidia-driver 'trixie-backports/.*/non-free')"
+  if [[ -n "$bp_ver" ]]; then
+    warn "Backports offers a newer version: $bp_ver"
+    warn "Try: sudo ./scripts/16-switch-to-backports.sh"
+  fi
+fi
+
 log "Installing/reinstalling Debian NVIDIA package stack for target kernel workflow"
 apt-get install --reinstall -y \
   nvidia-driver \
@@ -38,10 +48,12 @@ apt-get install --reinstall -y \
 log "Removing old installed NVIDIA modules for target kernel $TARGET_KERNEL"
 remove_installed_nvidia_modules_for_kernel "$TARGET_KERNEL" || true
 
+dkms_module_name="$(dkms status | awk -F'[:,/ ]+' '/nvidia/ {print $1; exit}')"
+dkms_module_name="${dkms_module_name:-nvidia-current}"
 nvidia_dkms_version="$(installed_package_version nvidia-kernel-dkms | sed 's/-.*//')"
 if [[ -n "$nvidia_dkms_version" ]]; then
-  log "Removing old DKMS build state for nvidia/$nvidia_dkms_version on $TARGET_KERNEL"
-  dkms remove -m nvidia -v "$nvidia_dkms_version" -k "$TARGET_KERNEL" --all >/dev/null 2>&1 || true
+  log "Removing old DKMS build state for $dkms_module_name/$nvidia_dkms_version on $TARGET_KERNEL"
+  dkms remove -m "$dkms_module_name" -v "$nvidia_dkms_version" -k "$TARGET_KERNEL" --all >/dev/null 2>&1 || true
 fi
 
 log "Building/installing DKMS modules for target kernel $TARGET_KERNEL"

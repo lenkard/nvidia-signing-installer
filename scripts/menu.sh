@@ -31,11 +31,15 @@ prompt_kernel() {
 }
 
 show_help() {
-  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA .ko.xz files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 11\n- For a newly installed kernel: 12 (build/sign/verify for target kernel)\n- Diagnostics and verification also check whether nvidia-smi is actually installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 22 90
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA module files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 12\n- For a newly installed kernel: 13 (build/sign/verify for target kernel)\n- If the driver branch is too old for the GPU: 10 (switch to backports)\n- Diagnostics and verification also detect GPU/driver incompatibility and check whether nvidia-smi is installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 24 95
+}
+
+show_driver_too_old_help() {
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "If the project reports: 'Packages installed successfully, but this driver branch does not support your GPU', the Debian stable branch is too old for your GPU.\n\nRecommended order:\n1. Try Debian backports first\n2. Re-run diagnostics and verification\n3. Only consider upstream/external NVIDIA packaging if Debian/backports still lacks support\n\nThe menu can run a backports switch helper automatically if selected." 22 95
 }
 
 while true; do
-  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 26 100 16 \
+  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 28 105 18 \
     "1" "Diagnose current system" \
     "2" "Install Debian prerequisites" \
     "3" "Install Debian NVIDIA driver" \
@@ -43,14 +47,16 @@ while true; do
     "5" "Fresh MOK setup (replace old key files after confirmation)" \
     "6" "Sign NVIDIA modules + rebuild initramfs" \
     "7" "Verify Secure Boot/NVIDIA state" \
-    "8" "Repair broken installed NVIDIA .ko.xz modules" \
+    "8" "Repair broken installed NVIDIA module files" \
     "9" "Recovery: purge/reinstall driver + fresh MOK" \
-    "10" "Guided first-time flow" \
-    "11" "Guided recovery flow" \
-    "12" "Target kernel: build + sign + depmod + initramfs + verify" \
-    "13" "Target kernel: verify only" \
-    "14" "Help" \
-    "15" "Exit" 3>&1 1>&2 2>&3) || exit 0
+    "10" "Remediation: switch NVIDIA packages to backports" \
+    "11" "Remediation: show 'driver too old' help" \
+    "12" "Guided recovery flow" \
+    "13" "Target kernel: build + sign + depmod + initramfs + verify" \
+    "14" "Target kernel: verify only" \
+    "15" "Guided first-time flow" \
+    "16" "Help" \
+    "17" "Exit" 3>&1 1>&2 2>&3) || exit 0
 
   case "$choice" in
     1) run_script "Diagnostics" "$PROJECT_DIR/scripts/00-diagnose.sh" ;;
@@ -86,13 +92,18 @@ while true; do
         run_script "Recovery" run_as_root "$PROJECT_DIR/scripts/25-recover.sh"
       fi
       ;;
-    10) run_script "Guided first-time flow" "$PROJECT_DIR/scripts/run-all.sh" ;;
-    11)
+    10)
+      if confirm "Switch NVIDIA packages to Debian backports now?"; then
+        run_script "Switch to backports" run_as_root "$PROJECT_DIR/scripts/16-switch-to-backports.sh"
+      fi
+      ;;
+    11) show_driver_too_old_help ;;
+    12)
       if confirm "Guided recovery will purge/reinstall NVIDIA, repair installed modules, and start fresh MOK setup. Continue?"; then
         run_script "Guided recovery flow" "$PROJECT_DIR/scripts/run-recovery.sh"
       fi
       ;;
-    12)
+    13)
       kernel="$(prompt_kernel)" || continue
       mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Signing mode for $kernel" 14 80 3 \
         "signed" "Build and sign (requires MOK files)" \
@@ -104,7 +115,7 @@ while true; do
         *) ;;
       esac
       ;;
-    13)
+    14)
       kernel="$(prompt_kernel)" || continue
       mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Verification mode for $kernel" 14 80 3 \
         "signed" "Require signer fields" \
@@ -116,7 +127,8 @@ while true; do
         *) ;;
       esac
       ;;
-    14) show_help ;;
-    15) exit 0 ;;
+    15) run_script "Guided first-time flow" "$PROJECT_DIR/scripts/run-all.sh" ;;
+    16) show_help ;;
+    17) exit 0 ;;
   esac
 done

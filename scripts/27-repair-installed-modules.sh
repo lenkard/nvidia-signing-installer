@@ -19,9 +19,9 @@ for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm nvidia-peermem; do
 done
 
 if [[ "$corrupt" -eq 0 ]]; then
-  log "No corrupted installed NVIDIA .ko.xz files detected for current kernel."
+  log "No corrupted installed NVIDIA module files detected for target kernel $TARGET_KERNEL."
 else
-  warn "Removing broken installed NVIDIA module files for current kernel"
+  warn "Removing broken installed NVIDIA module files for target kernel $TARGET_KERNEL"
   remove_installed_nvidia_modules || true
 fi
 
@@ -38,15 +38,28 @@ apt-get install --reinstall -y \
   nvidia-driver-libs \
   firmware-misc-nonfree \
   dkms \
-  linux-headers-$(uname -r)
+  linux-headers-$TARGET_KERNEL
 install_optional_nvidia_smi_package
 
-log "Rebuilding NVIDIA DKMS module for kernel $(uname -r)"
-dkms remove -m nvidia -v "$(installed_package_version nvidia-kernel-dkms | sed 's/-.*//')" -k "$(uname -r)" --all >/dev/null 2>&1 || true
-dkms autoinstall -k "$(uname -r)"
+verdict="$(driver_support_verdict)"
+if [[ "$verdict" == "too-old-heuristic" || "$verdict" == "unsupported-by-kernel-log" ]]; then
+  warn "Packages installed successfully, but this driver branch does not support your GPU."
+  bp_ver="$(apt_package_version_from_suite nvidia-driver 'trixie-backports/.*/non-free')"
+  if [[ -n "$bp_ver" ]]; then
+    warn "Backports offers a newer version: $bp_ver"
+    warn "Try: sudo ./scripts/16-switch-to-backports.sh"
+  fi
+fi
 
-depmod -a "$(uname -r)"
-update-initramfs -u -k all
+log "Rebuilding NVIDIA DKMS module for kernel $TARGET_KERNEL"
+dkms_module_name="$(dkms status | awk -F'[:,/ ]+' '/nvidia/ {print $1; exit}')"
+dkms_module_name="${dkms_module_name:-nvidia-current}"
+dkms_module_version="$(installed_package_version nvidia-kernel-dkms | sed 's/-.*//')"
+dkms remove -m "$dkms_module_name" -v "$dkms_module_version" -k "$TARGET_KERNEL" --all >/dev/null 2>&1 || true
+dkms autoinstall -k "$TARGET_KERNEL"
+
+depmod -a "$TARGET_KERNEL"
+update-initramfs -u -k "$TARGET_KERNEL"
 
 log "Post-repair verification"
 failed=0
@@ -78,6 +91,8 @@ fi
 
 log "Post-repair nvidia-smi status"
 print_nvidia_smi_status
+log "Post-repair GPU/driver support assessment"
+print_driver_support_assessment
 
 cat <<MSG
 

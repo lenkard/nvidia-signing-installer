@@ -23,6 +23,8 @@ log "Package matrix for target kernel $TARGET_KERNEL:"
 print_nvidia_package_matrix
 log "nvidia-smi presence/package status:"
 print_nvidia_smi_status
+log "GPU/driver support assessment:"
+print_driver_support_assessment
 
 for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
   path="$(module_install_path_for "$mod" "$TARGET_KERNEL" 2>/dev/null || true)"
