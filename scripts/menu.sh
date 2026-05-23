@@ -26,12 +26,16 @@ confirm() {
   whiptail --title "$TITLE" --backtitle "$BACKTITLE" --yesno "$1" 12 78
 }
 
+prompt_kernel() {
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --inputbox "Enter target kernel version (example: 6.12.88+deb13-amd64)" 12 80 3>&1 1>&2 2>&3
+}
+
 show_help() {
-  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA .ko.xz files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 11\n- Diagnostics and verification now also check whether nvidia-smi is actually installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 20 90
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA .ko.xz files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 11\n- For a newly installed kernel: 12 (build/sign/verify for target kernel)\n- Diagnostics and verification also check whether nvidia-smi is actually installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 22 90
 }
 
 while true; do
-  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 24 100 14 \
+  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 26 100 16 \
     "1" "Diagnose current system" \
     "2" "Install Debian prerequisites" \
     "3" "Install Debian NVIDIA driver" \
@@ -43,8 +47,10 @@ while true; do
     "9" "Recovery: purge/reinstall driver + fresh MOK" \
     "10" "Guided first-time flow" \
     "11" "Guided recovery flow" \
-    "12" "Help" \
-    "13" "Exit" 3>&1 1>&2 2>&3) || exit 0
+    "12" "Target kernel: build + sign + depmod + initramfs + verify" \
+    "13" "Target kernel: verify only" \
+    "14" "Help" \
+    "15" "Exit" 3>&1 1>&2 2>&3) || exit 0
 
   case "$choice" in
     1) run_script "Diagnostics" "$PROJECT_DIR/scripts/00-diagnose.sh" ;;
@@ -86,7 +92,31 @@ while true; do
         run_script "Guided recovery flow" "$PROJECT_DIR/scripts/run-recovery.sh"
       fi
       ;;
-    12) show_help ;;
-    13) exit 0 ;;
+    12)
+      kernel="$(prompt_kernel)" || continue
+      mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Signing mode for $kernel" 14 80 3 \
+        "signed" "Build and sign (requires MOK files)" \
+        "unsigned" "Build without signing" \
+        "cancel" "Cancel" 3>&1 1>&2 2>&3) || continue
+      case "$mode" in
+        signed) run_script "Target kernel build/sign" run_as_root "$PROJECT_DIR/scripts/50-build-target-kernel.sh" "$kernel" ;;
+        unsigned) run_script "Target kernel build unsigned" run_as_root "$PROJECT_DIR/scripts/50-build-target-kernel.sh" "$kernel" --allow-unsigned ;;
+        *) ;;
+      esac
+      ;;
+    13)
+      kernel="$(prompt_kernel)" || continue
+      mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Verification mode for $kernel" 14 80 3 \
+        "signed" "Require signer fields" \
+        "unsigned" "Allow unsigned modules" \
+        "cancel" "Cancel" 3>&1 1>&2 2>&3) || continue
+      case "$mode" in
+        signed) run_script "Target kernel verify" "$PROJECT_DIR/scripts/51-verify-target-kernel.sh" "$kernel" ;;
+        unsigned) run_script "Target kernel verify unsigned-ok" "$PROJECT_DIR/scripts/51-verify-target-kernel.sh" "$kernel" --unsigned-ok ;;
+        *) ;;
+      esac
+      ;;
+    14) show_help ;;
+    15) exit 0 ;;
   esac
 done

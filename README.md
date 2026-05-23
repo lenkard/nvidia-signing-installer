@@ -11,6 +11,7 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 - Install Debian prerequisites and Debian-packaged NVIDIA drivers
 - Create and enroll a MOK key for module signing
 - Re-sign NVIDIA modules for the current kernel
+- Build, install, sign, and verify NVIDIA modules for a **target kernel**
 - Recover from wrong MOK password / broken signing setup
 - Keep per-script logs and session summary logs
 - Warn when Debian-packaged NVIDIA support is likely too old for RTX 50 / Blackwell GPUs
@@ -22,26 +23,30 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 - Secure Boot enabled systems
 - Headless / TTY-first workflows
 - Reusable on similar Debian/NVIDIA systems
+- Multiple installed kernels
 
 ## Safety model
 
 - Safe steps can be performed automatically
 - Destructive recovery steps are only reached through explicit menu/script selection
 - Replacing old local MOK key files requires confirmation
+- Target-kernel workflows require an explicit target kernel argument
 - The project does **not** disable Secure Boot
 - The project does **not** use NVIDIA's `.run` installer
 - The project does **not** silently change BIOS/UEFI settings
 
 ## Layout
 
-- `scripts/00-diagnose.sh` — collect system/NVIDIA/Secure Boot diagnostics, check installed `.ko.xz` health, and check `nvidia-smi`
+- `scripts/00-diagnose.sh` — current-system diagnostics, `.ko.xz` health, and `nvidia-smi`
 - `scripts/10-install-debian-prereqs.sh` — install Debian prerequisites, including `whiptail`
-- `scripts/15-install-nvidia-driver.sh` — install Debian-packaged NVIDIA driver, or purge+reinstall, and try to install `nvidia-smi` if split out as a separate package
+- `scripts/15-install-nvidia-driver.sh` — install Debian-packaged NVIDIA driver, or purge+reinstall, and try to install `nvidia-smi` if split out separately
 - `scripts/20-create-or-enroll-mok.sh` — create/import MOK; supports `--fresh`
 - `scripts/25-recover.sh` — recovery flow: purge/reinstall driver + repair installed modules + fresh MOK setup
 - `scripts/27-repair-installed-modules.sh` — detect/remove broken installed NVIDIA `.ko.xz` modules, rebuild DKMS, depmod, initramfs, and verify `nvidia-smi`
-- `scripts/30-sign-nvidia-modules.sh` — sign NVIDIA modules for the current kernel and rebuild initramfs
-- `scripts/40-verify.sh` — verify module files, signatures, runtime state, installed `.ko.xz` health, and `nvidia-smi`
+- `scripts/30-sign-nvidia-modules.sh` — sign installed NVIDIA modules for the selected kernel and rebuild initramfs
+- `scripts/40-verify.sh` — verify current/selected kernel module files, signatures, runtime state, `.ko.xz` health, and `nvidia-smi`
+- `scripts/50-build-target-kernel.sh` — build + install + optional sign + depmod + initramfs + verify for a target kernel
+- `scripts/51-verify-target-kernel.sh` — verify a target kernel only
 - `scripts/run-all.sh` — guided first-time flow
 - `scripts/run-recovery.sh` — guided recovery flow
 - `scripts/menu.sh` — terminal UI menu using `whiptail`
@@ -65,12 +70,13 @@ Menu features:
 - verification
 - repair for broken installed `.ko.xz` NVIDIA modules
 - full recovery flow
+- target-kernel build/sign/verify flows
 
 The menu writes a summary log under `logs/` and each called script still writes its own log too.
 
 ## `nvidia-smi` verification
 
-Diagnostics and verification now check:
+Diagnostics and verification check:
 - whether `nvidia-smi` is in `PATH`
 - which installed Debian package owns the binary, if present
 - whether a separate `nvidia-smi` package exists in apt
@@ -104,6 +110,49 @@ Or use:
 ./scripts/run-all.sh
 ```
 
+## Target kernel workflow
+
+This is for cases like:
+- “I installed a new kernel and want NVIDIA ready before rebooting into it”
+- “I booted a new kernel and need to rebuild NVIDIA for it”
+
+### Signed target-kernel build
+
+```bash
+sudo ./scripts/50-build-target-kernel.sh 6.12.88+deb13-amd64
+```
+
+### Unsigned target-kernel build
+
+```bash
+sudo ./scripts/50-build-target-kernel.sh 6.12.88+deb13-amd64 --allow-unsigned
+```
+
+### Verify target kernel later
+
+```bash
+./scripts/51-verify-target-kernel.sh 6.12.88+deb13-amd64
+```
+
+### Verify target kernel but allow unsigned modules
+
+```bash
+./scripts/51-verify-target-kernel.sh 6.12.88+deb13-amd64 --unsigned-ok
+```
+
+The target-kernel workflow will:
+1. require an explicit target kernel version
+2. automatically install the target kernel package if apt has it and it is missing
+3. automatically install matching headers if missing
+4. reinstall the Debian NVIDIA package stack
+5. rebuild DKMS modules for the target kernel
+6. optionally sign the installed modules
+7. run `depmod` for the target kernel
+8. rebuild `initramfs` for the target kernel
+9. verify `.ko.xz` health, `modinfo`, signer fields, initramfs presence, and `nvidia-smi`
+
+Target-kernel logs include the kernel version in the log file name.
+
 ## If `xz: File is corrupt` or `modinfo` fails on installed NVIDIA modules
 
 If you see errors like:
@@ -117,8 +166,8 @@ sudo ./scripts/27-repair-installed-modules.sh
 ```
 
 This will:
-1. inspect `/lib/modules/$(uname -r)/updates/dkms/`
-2. remove broken installed NVIDIA `.ko` / `.ko.xz` files for the current kernel
+1. inspect `/lib/modules/<kernel>/updates/dkms/`
+2. remove broken installed NVIDIA `.ko` / `.ko.xz` files for the selected kernel
 3. reinstall Debian NVIDIA DKMS-related packages
 4. rebuild DKMS modules
 5. run `depmod`
@@ -153,26 +202,6 @@ sudo ./scripts/25-recover.sh
 Choose:
 - `Recovery: purge/reinstall driver + fresh MOK`
 
-## What recovery does
-
-Recovery is designed for the case where signing is broken and you want the shortest clean retry path.
-
-It will:
-1. install prerequisites
-2. purge Debian NVIDIA packages
-3. reinstall Debian NVIDIA packages
-4. repair broken installed NVIDIA module files if needed
-5. try to install `nvidia-smi` if Debian provides it separately
-6. create a fresh local MOK keypair
-7. import the new MOK with `mokutil`
-8. tell you to reboot and complete MOK enrollment manually
-
-If local `MOK.der` / `MOK.priv` files exist, the fresh MOK flow asks for confirmation before replacing them, and moves old copies into:
-
-```text
-./backups/<timestamp>/
-```
-
 ## Fresh MOK setup without full driver recovery
 
 If you only want a new keypair and new enrollment attempt:
@@ -202,7 +231,7 @@ Diagnostics print installed and apt-candidate versions for key packages such as:
 - `nvidia-smi`
 - `firmware-misc-nonfree`
 - `dkms`
-- `linux-headers-$(uname -r)`
+- `linux-headers-<target-kernel>`
 
 This helps detect partial upgrades or package mismatches.
 
@@ -212,6 +241,12 @@ Per-script logs:
 
 ```text
 ./logs/YYYYmmdd-HHMMSS-<script>.log
+```
+
+Target-kernel logs:
+
+```text
+./logs/YYYYmmdd-HHMMSS-<script>-<target-kernel>.log
 ```
 
 Menu/session summary logs:
@@ -238,11 +273,3 @@ rm -f MOK.der MOK.priv
 Old key files preserved by fresh recovery are stored in `./backups/`.
 
 To stop using the proprietary driver, purge it with apt as appropriate for your system.
-
-## Sources reflected in this project
-
-Research for this project was based on current web/forum guidance including:
-
-- Debian Wiki `NvidiaGraphicsDrivers` snippets indicating Secure Boot requires MOK enrollment and that Blackwell support may lag in Debian packages
-- NVIDIA Developer Forums guidance on signing modules with MOK for Secure Boot
-- Linux community reports about Debian/Trixie packaged NVIDIA versions being too old for Blackwell

@@ -6,7 +6,13 @@ LOG_DIR="$PROJECT_DIR/logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SCRIPT_BASENAME="$(basename "${BASH_SOURCE[1]:-$0}" .sh)"
-LOG_FILE="$LOG_DIR/${TIMESTAMP}-${SCRIPT_BASENAME}.log"
+TARGET_KERNEL="${NSI_TARGET_KERNEL:-${TARGET_KERNEL:-$(uname -r)}}"
+TARGET_KERNEL_SAFE="$(printf '%s' "$TARGET_KERNEL" | tr '/ ' '__')"
+LOG_SUFFIX=""
+if [[ -n "${NSI_TARGET_KERNEL:-}" || -n "${TARGET_KERNEL:-}" ]]; then
+  LOG_SUFFIX="-${TARGET_KERNEL_SAFE}"
+fi
+LOG_FILE="$LOG_DIR/${TIMESTAMP}-${SCRIPT_BASENAME}${LOG_SUFFIX}.log"
 SESSION_LOG="${NSI_SESSION_LOG:-}"
 
 if [[ -n "$SESSION_LOG" ]]; then
@@ -65,24 +71,48 @@ secure_boot_state() {
   fi
 }
 
+default_kernel() { uname -r; }
+current_kernel() { echo "$TARGET_KERNEL"; }
+
 kernel_headers_path() {
-  echo "/usr/src/linux-headers-$(uname -r)/scripts/sign-file"
+  kernel_headers_path_for "$TARGET_KERNEL"
+}
+
+kernel_headers_path_for() {
+  local kernel="$1"
+  echo "/usr/src/linux-headers-$kernel/scripts/sign-file"
 }
 
 ensure_sign_file() {
+  ensure_sign_file_for "$TARGET_KERNEL"
+}
+
+ensure_sign_file_for() {
+  local kernel="$1"
   local sf
-  sf="$(kernel_headers_path)"
-  [[ -x "$sf" ]] || die "sign-file not found at $sf. Install linux-headers-$(uname -r)."
+  sf="$(kernel_headers_path_for "$kernel")"
+  [[ -x "$sf" ]] || die "sign-file not found at $sf. Install linux-headers-$kernel."
 }
 
 module_path_or_empty() {
   local mod="$1"
-  modinfo -n "$mod" 2>/dev/null || true
+  modinfo -k "$TARGET_KERNEL" -n "$mod" 2>/dev/null || true
+}
+
+module_path_for_kernel_or_empty() {
+  local kernel="$1"
+  local mod="$2"
+  modinfo -k "$kernel" -n "$mod" 2>/dev/null || true
 }
 
 module_install_path() {
+  module_install_path_for "$1" "$TARGET_KERNEL"
+}
+
+module_install_path_for() {
   local name="$1"
-  local base="/lib/modules/$(uname -r)/updates/dkms"
+  local kernel="$2"
+  local base="/lib/modules/$kernel/updates/dkms"
   case "$name" in
     nvidia) echo "$base/nvidia.ko.xz" ;;
     nvidia-modeset) echo "$base/nvidia-modeset.ko.xz" ;;
@@ -110,9 +140,39 @@ modinfo_file_works() {
   modinfo "$p" >/dev/null 2>&1
 }
 
+sign_module_file() {
+  local kernel="$1"
+  local file="$2"
+  ensure_sign_file_for "$kernel"
+  [[ -f "$PROJECT_DIR/MOK.priv" && -f "$PROJECT_DIR/MOK.der" ]] || die "MOK.priv and MOK.der must exist in $PROJECT_DIR."
+  "$(kernel_headers_path_for "$kernel")" sha256 "$PROJECT_DIR/MOK.priv" "$PROJECT_DIR/MOK.der" "$file"
+}
+
+sign_installed_module_for_kernel() {
+  local kernel="$1"
+  local module="$2"
+  local path tmp
+  path="$(module_install_path_for "$module" "$kernel" 2>/dev/null || true)"
+  [[ -n "$path" && -e "$path" ]] || { warn "Installed module file not found for $module on $kernel"; return 1; }
+  if [[ "$path" == *.xz ]]; then
+    tmp="$(mktemp --suffix=.ko)"
+    xz -dc "$path" > "$tmp"
+    sign_module_file "$kernel" "$tmp"
+    xz -zc "$tmp" > "$path"
+    rm -f "$tmp"
+  else
+    sign_module_file "$kernel" "$path"
+  fi
+}
+
 remove_installed_nvidia_modules() {
+  remove_installed_nvidia_modules_for_kernel "$TARGET_KERNEL"
+}
+
+remove_installed_nvidia_modules_for_kernel() {
+  local kernel="$1"
   local removed=0
-  local base="/lib/modules/$(uname -r)/updates/dkms"
+  local base="/lib/modules/$kernel/updates/dkms"
   if [[ -d "$base" ]]; then
     while IFS= read -r -d '' file; do
       log "Removing installed module file: $file"
@@ -132,8 +192,6 @@ nvidia_modules_present() {
   done
   return "$found"
 }
-
-current_kernel() { uname -r; }
 
 is_debian() {
   [[ -r /etc/os-release ]] && . /etc/os-release && [[ "${ID:-}" == "debian" ]]
@@ -187,7 +245,7 @@ MSG
 }
 
 print_nvidia_package_matrix() {
-  for pkg in nvidia-driver nvidia-kernel-dkms nvidia-driver-libs nvidia-smi firmware-misc-nonfree dkms linux-headers-$(uname -r); do
+  for pkg in nvidia-driver nvidia-kernel-dkms nvidia-driver-libs nvidia-smi firmware-misc-nonfree dkms linux-headers-$TARGET_KERNEL; do
     printf '%-28s installed=%s candidate=%s\n' "$pkg" "$(installed_package_version "$pkg")" "$(apt_candidate_version "$pkg")"
   done
 }
@@ -214,4 +272,88 @@ install_optional_nvidia_smi_package() {
   else
     warn "No separate nvidia-smi apt candidate found; relying on current package set"
   fi
+}
+
+kernel_package_name() { echo "linux-image-$1"; }
+headers_package_name() { echo "linux-headers-$1"; }
+
+kernel_installed() {
+  [[ -d "/lib/modules/$1" ]]
+}
+
+apt_package_available() {
+  local candidate
+  candidate="$(apt_candidate_version "$1" || true)"
+  [[ -n "$candidate" && "$candidate" != "(none)" ]]
+}
+
+ensure_target_kernel_and_headers() {
+  local kernel="$1"
+  local image_pkg headers_pkg
+  image_pkg="$(kernel_package_name "$kernel")"
+  headers_pkg="$(headers_package_name "$kernel")"
+  apt-get update
+  if ! kernel_installed "$kernel"; then
+    if apt_package_available "$image_pkg"; then
+      log "Installing target kernel package: $image_pkg"
+      apt-get install -y "$image_pkg"
+    else
+      die "Target kernel package $image_pkg is not installed and not available in apt."
+    fi
+  fi
+  if ! dpkg -s "$headers_pkg" >/dev/null 2>&1; then
+    if apt_package_available "$headers_pkg"; then
+      log "Installing target kernel headers: $headers_pkg"
+      apt-get install -y "$headers_pkg"
+    else
+      die "Target kernel headers package $headers_pkg is not installed and not available in apt."
+    fi
+  fi
+}
+
+ensure_mok_files_or_maybe_unsigned() {
+  local allow_unsigned="$1"
+  if [[ -f "$PROJECT_DIR/MOK.priv" && -f "$PROJECT_DIR/MOK.der" ]]; then
+    return 0
+  fi
+  if [[ "$allow_unsigned" == "yes" ]]; then
+    warn "MOK files missing; continuing with unsigned build because --allow-unsigned was selected."
+    return 0
+  fi
+  die "MOK.priv and MOK.der are missing. Run scripts/20-create-or-enroll-mok.sh first or use --allow-unsigned."
+}
+
+verify_target_kernel_modules() {
+  local kernel="$1"
+  local require_signing="$2"
+  local failed=0
+  for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
+    local installed_path
+    installed_path="$(module_install_path_for "$mod" "$kernel" 2>/dev/null || true)"
+    if [[ -z "$installed_path" || ! -e "$installed_path" ]]; then
+      warn "Expected installed module missing for $mod on $kernel"
+      failed=1
+      continue
+    fi
+    if ! xz_module_is_valid "$installed_path"; then
+      warn "xz test failed for $installed_path"
+      failed=1
+    fi
+    if ! modinfo_file_works "$installed_path"; then
+      warn "modinfo failed for $installed_path"
+      failed=1
+    fi
+    if [[ "$require_signing" == "yes" ]]; then
+      if [[ -z "$(modinfo -F signer "$installed_path" 2>/dev/null || true)" ]]; then
+        warn "Signer field missing for $installed_path"
+        failed=1
+      fi
+    fi
+  done
+  [[ -e "/boot/initrd.img-$kernel" ]] || { warn "initramfs missing for $kernel at /boot/initrd.img-$kernel"; failed=1; }
+  if ! command_exists nvidia-smi; then
+    warn "nvidia-smi is missing"
+    failed=1
+  fi
+  return "$failed"
 }
