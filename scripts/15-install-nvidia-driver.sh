@@ -25,6 +25,10 @@ fi
 
 log "Installing Debian-packaged NVIDIA driver stack"
 apt-get install -y nvidia-driver firmware-misc-nonfree dkms linux-headers-$(uname -r)
+install_optional_nvidia_smi_package
+
+log "Post-install nvidia-smi status"
+print_nvidia_smi_status
 
 cat <<MSG
 

@@ -7,6 +7,7 @@ log "Secure Boot: $(secure_boot_state | tr '\n' ' ' | sed 's/  */ /g')"
 
 for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
   path="$(module_path_or_empty "$mod")"
+  installed_path="$(module_install_path "$mod" 2>/dev/null || true)"
   echo "=== $mod ==="
   if has_module_file "$path"; then
     echo "path: $path"
@@ -17,17 +18,33 @@ for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
   else
     warn "module file for $mod not found"
   fi
+  if [[ -n "$installed_path" && -e "$installed_path" ]]; then
+    echo "installed_path: $installed_path"
+    if xz_module_is_valid "$installed_path"; then
+      echo "xz: ok"
+    else
+      echo "xz: CORRUPT"
+    fi
+    if modinfo_file_works "$installed_path"; then
+      echo "modinfo: ok"
+    else
+      echo "modinfo: FAILED"
+    fi
+  fi
   echo
  done
 
 log "Loaded NVIDIA modules:"
 lsmod | grep '^nvidia' || true
 
-log "nvidia-smi:"
+log "nvidia-smi presence/package status:"
+print_nvidia_smi_status
+
+log "nvidia-smi runtime check:"
 if command_exists nvidia-smi; then
   nvidia-smi || true
 else
-  warn "nvidia-smi not found"
+  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing or split into a separate package."
 fi
 
 log "Recent relevant kernel messages:"

@@ -13,10 +13,10 @@ gpu_summary
 log "Display manager services:"
 systemctl list-unit-files | grep -E 'gdm|sddm|lightdm' || true
 
-log "NVIDIA package candidates:"
-for pkg in nvidia-driver firmware-misc-nonfree linux-headers-$(uname -r) dkms mokutil openssl; do
-  printf '%-28s %s\n' "$pkg" "$(apt_candidate_version "$pkg" || true)"
-done
+log "NVIDIA package installed/candidate versions:"
+print_nvidia_package_matrix
+printf '%-28s installed=%s candidate=%s\n' "mokutil" "$(installed_package_version mokutil)" "$(apt_candidate_version mokutil || true)"
+printf '%-28s installed=%s candidate=%s\n' "openssl" "$(installed_package_version openssl)" "$(apt_candidate_version openssl || true)"
 
 candidate="$(apt_candidate_version nvidia-driver || true)"
 if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
@@ -36,6 +36,24 @@ for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm nouveau; do
   echo "$m => $(module_path_or_empty "$m")"
 done
 
+log "Installed NVIDIA module file health under /lib/modules/$(uname -r)/updates/dkms:"
+for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm nvidia-peermem; do
+  p="$(module_install_path "$m" 2>/dev/null || true)"
+  if [[ -n "$p" && -e "$p" ]]; then
+    echo "$m => $p"
+    if xz_module_is_valid "$p"; then
+      echo "  xz: ok"
+    else
+      echo "  xz: CORRUPT"
+    fi
+    if modinfo_file_works "$p"; then
+      echo "  modinfo: ok"
+    else
+      echo "  modinfo: FAILED"
+    fi
+  fi
+done
+
 log "mokutil enrolled keys:"
 if command_exists mokutil; then
   mokutil --list-enrolled 2>/dev/null | sed -n '1,80p' || true
@@ -47,11 +65,14 @@ dmesg -T | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau' | t
 log "journalctl kernel messages matching secure/nvidia/mok/lockdown:"
 journalctl -k -b 0 | grep -Ei 'secure|lockdown|nvidia|module verification|mok|nouveau' | tail -n 200 || true
 
-log "nvidia-smi:"
+log "nvidia-smi presence/package status:"
+print_nvidia_smi_status
+
+log "nvidia-smi runtime check:"
 if command_exists nvidia-smi; then
   nvidia-smi || true
 else
-  warn "nvidia-smi not found"
+  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing or split into a separate package."
 fi
 
 log "Diagnostics complete. Log saved to $LOG_FILE"
