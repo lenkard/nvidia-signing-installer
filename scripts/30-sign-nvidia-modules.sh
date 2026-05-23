@@ -29,7 +29,7 @@ cat <<MSG
 
 Signing complete.
 Recommended next steps:
-- Reboot
+- Reboot if desired
 - Run: ./scripts/40-verify.sh
 
 Log saved to: $LOG_FILE

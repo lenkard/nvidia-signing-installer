@@ -11,6 +11,7 @@ apt-get install -y \
   mokutil \
   openssl \
   dkms \
+  whiptail \
   linux-headers-$(uname -r) \
   firmware-misc-nonfree
 
@@ -19,10 +20,7 @@ if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
   warn "No nvidia-driver candidate found. Ensure your apt sources include contrib/non-free/non-free-firmware as appropriate."
 else
   log "nvidia-driver candidate: $candidate"
-  major="$(version_major "$candidate")"
-  if [[ "$major" -lt 570 ]]; then
-    warn "Candidate is older than 570. Blackwell / RTX 5070 Ti may still fail even after Secure Boot signing."
-  fi
+  nvidia_pkg_major_warning
 fi
 
 log "Done. Log saved to $LOG_FILE"

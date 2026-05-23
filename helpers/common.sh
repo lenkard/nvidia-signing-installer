@@ -7,8 +7,15 @@ mkdir -p "$LOG_DIR"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SCRIPT_BASENAME="$(basename "${BASH_SOURCE[1]:-$0}" .sh)"
 LOG_FILE="$LOG_DIR/${TIMESTAMP}-${SCRIPT_BASENAME}.log"
+SESSION_LOG="${NSI_SESSION_LOG:-}"
 
-exec > >(tee -a "$LOG_FILE") 2>&1
+if [[ -n "$SESSION_LOG" ]]; then
+  mkdir -p "$(dirname "$SESSION_LOG")"
+  touch "$SESSION_LOG"
+  exec > >(tee -a "$LOG_FILE" "$SESSION_LOG") 2>&1
+else
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 warn() { printf '[%s] WARN: %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -16,6 +23,14 @@ die() { printf '[%s] ERROR: %s\n' "$(date +%H:%M:%S)" "$*" >&2; exit 1; }
 
 require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Run this script with sudo/root."
+}
+
+run_as_root() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
 }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -84,4 +99,42 @@ os_summary() {
   else
     uname -a
   fi
+}
+
+confirm_or_die() {
+  local prompt="$1"
+  read -r -p "$prompt [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || die "Aborted by user."
+}
+
+migrate_existing_file() {
+  local path="$1"
+  local backup_dir="$PROJECT_DIR/backups/$TIMESTAMP"
+  if [[ -e "$path" ]]; then
+    mkdir -p "$backup_dir"
+    mv "$path" "$backup_dir/"
+    log "Moved existing $(basename "$path") to $backup_dir"
+  fi
+}
+
+nvidia_pkg_major_warning() {
+  local candidate
+  candidate="$(apt_candidate_version nvidia-driver || true)"
+  if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
+    local major
+    major="$(version_major "$candidate")"
+    if [[ "$major" -lt 570 ]]; then
+      warn "Debian candidate nvidia-driver ($candidate) appears older than 570. RTX 5070 Ti / Blackwell may not be supported well or at all."
+    fi
+  fi
+}
+
+print_manual_mok_steps() {
+  cat <<'MSG'
+Manual step required:
+- Reboot now
+- In the blue MOK Manager screen choose: Enroll MOK -> Continue -> Yes
+- Enter the one-time password you created during mokutil import
+- Boot back into Linux
+MSG
 }

@@ -18,25 +18,23 @@ action "Running diagnostics"
 "$PROJECT_DIR/scripts/00-diagnose.sh"
 
 action "Installing prerequisites"
-sudo "$PROJECT_DIR/scripts/10-install-debian-prereqs.sh"
+run_as_root "$PROJECT_DIR/scripts/10-install-debian-prereqs.sh"
 
 read -r -p "Install Debian-packaged nvidia-driver now? [y/N] " reply
 if [[ "$reply" =~ ^[Yy]$ ]]; then
   action "Installing Debian-packaged NVIDIA driver"
-  sudo "$PROJECT_DIR/scripts/15-install-nvidia-driver.sh"
+  run_as_root "$PROJECT_DIR/scripts/15-install-nvidia-driver.sh"
 else
   log "Skipping Debian-packaged NVIDIA driver install"
 fi
 
 action "Creating/importing MOK"
-sudo "$PROJECT_DIR/scripts/20-create-or-enroll-mok.sh"
+run_as_root "$PROJECT_DIR/scripts/20-create-or-enroll-mok.sh"
 
 cat <<MSG
 
 The next step is manual:
-- Reboot now
-- Complete MOK enrollment in the blue screen
-- Boot back into Linux
+$(print_manual_mok_steps)
 - Then run:
     sudo ./scripts/30-sign-nvidia-modules.sh
     ./scripts/40-verify.sh
