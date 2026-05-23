@@ -347,6 +347,20 @@ apt_package_available() {
   [[ -n "$candidate" && "$candidate" != "(none)" ]]
 }
 
+nvidia_repo_distro_token() {
+  local vid
+  vid="$(. /etc/os-release && echo "${VERSION_ID:-}")"
+  case "$vid" in
+    12) echo "debian12" ;;
+    13) echo "debian13" ;;
+    *) return 1 ;;
+  esac
+}
+
+nvidia_official_repo_configured() {
+  [[ -f /etc/apt/sources.list.d/cuda-$(nvidia_repo_distro_token)-x86_64.list ]]
+}
+
 ensure_target_kernel_and_headers() {
   local kernel="$1" image_pkg headers_pkg
   image_pkg="$(kernel_package_name "$kernel")"
@@ -430,12 +444,41 @@ install_nvidia_from_backports() {
     nvidia-driver nvidia-kernel-dkms nvidia-driver-libs nvidia-smi nvidia-settings
 }
 
+configure_nvidia_official_network_repo() {
+  require_root
+  local token keyring_deb keyring_url
+  token="$(nvidia_repo_distro_token)" || die "Unsupported Debian VERSION_ID for NVIDIA documented repo path."
+  keyring_deb="/tmp/cuda-keyring_1.1-1_all.deb"
+  keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/${token}/x86_64/cuda-keyring_1.1-1_all.deb"
+  log "Downloading NVIDIA cuda-keyring from $keyring_url"
+  wget -O "$keyring_deb" "$keyring_url"
+  dpkg -i "$keyring_deb"
+  apt-get update
+  log "NVIDIA official network repo configured for $token"
+}
+
+install_nvidia_from_official_repo() {
+  require_root
+  local purge_first="${1:-yes}"
+  if [[ "$purge_first" == "yes" ]]; then
+    log "Purging Debian NVIDIA packages before switching to NVIDIA official repo"
+    apt-get purge -y 'nvidia-*' 'libnvidia-*' 'xserver-xorg-video-nvidia*' || true
+    apt-get autoremove -y || true
+  fi
+  configure_nvidia_official_network_repo
+  log "Installing NVIDIA proprietary desktop driver per NVIDIA Debian docs"
+  apt-get install -y nvidia-driver nvidia-kernel-dkms nvidia-driver-cuda nvidia-settings
+  if apt_package_available nvidia-smi; then
+    apt-get install -y nvidia-smi
+  fi
+}
+
 print_external_nvidia_guidance() {
   cat <<'MSG'
-External/upstream NVIDIA guidance:
-- Prefer Debian stable or Debian backports first.
-- If your GPU is still unsupported, consider newer official NVIDIA packages or installer only as a last resort.
-- Mixing Debian-packaged NVIDIA with upstream .run installations can break DKMS/module paths.
-- If you use upstream packages, purge Debian NVIDIA packages first and document the change.
+NVIDIA documented Debian repo guidance:
+- Preferred order for this project: Debian stable -> Debian backports -> NVIDIA official Debian repo.
+- Use NVIDIA's documented network repository enablement with cuda-keyring on Debian 12/13.
+- Prefer one packaging source at a time; purge conflicting Debian NVIDIA packages before switching sources when possible.
+- Avoid mixing Debian-packaged NVIDIA with upstream .run installations.
 MSG
 }

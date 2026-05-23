@@ -2,6 +2,24 @@
 
 Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-module repair helpers, recovery helpers, and a terminal menu for NVIDIA drivers.
 
+## What NVIDIA recommends
+
+From NVIDIA’s Debian installation guide:
+- install matching kernel headers
+- for Debian 12/13, enable NVIDIA’s **network repository** using `cuda-keyring`
+- then install drivers with apt
+- for proprietary kernel modules, NVIDIA documents:
+  - `apt -V install cuda-drivers`
+- for desktop-only proprietary installation, NVIDIA documents:
+  - `apt -V install nvidia-driver nvidia-kernel-dkms`
+- reboot after installation
+- for future upgrades, use normal apt upgrade flows such as `apt dist-upgrade`
+
+This project implements the **documented Debian network repository path** and keeps it as an optional remediation path after Debian stable/backports.
+
+Source used:
+- https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/latest/debian.html
+
 ## Goals
 
 - Diagnose common NVIDIA-on-Debian failures
@@ -20,8 +38,7 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 ## Target environment
 
 - Debian 12/13, especially Debian Trixie
-- Debian packages + backports
-- Optional external/upstream NVIDIA guidance only
+- Debian packages + backports + optional NVIDIA official Debian repo
 - Secure Boot enabled systems
 - Headless / TTY-first workflows
 - Reusable on similar Debian/NVIDIA systems
@@ -34,7 +51,7 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 - Replacing old local MOK key files requires confirmation
 - Target-kernel workflows require an explicit target kernel argument
 - Driver-too-old detection warns clearly but does not hard-stop every workflow
-- The project does **not** disable Secure Boot
+- The project supports only NVIDIA’s **documented Debian repo path** as external remediation
 - The project does **not** use NVIDIA's `.run` installer automatically
 - The project does **not** silently change BIOS/UEFI settings
 
@@ -44,6 +61,7 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 - `scripts/10-install-debian-prereqs.sh` — install Debian prerequisites, including `whiptail`
 - `scripts/15-install-nvidia-driver.sh` — install Debian-packaged NVIDIA driver and warn if the branch is too old for the GPU
 - `scripts/16-switch-to-backports.sh` — switch/install NVIDIA packages from `trixie-backports`
+- `scripts/17-switch-to-nvidia-official-repo.sh` — configure NVIDIA’s documented Debian repo and install newer NVIDIA packages automatically
 - `scripts/20-create-or-enroll-mok.sh` — create/import MOK; supports `--fresh`
 - `scripts/25-recover.sh` — recovery flow: purge/reinstall driver + repair installed modules + fresh MOK setup
 - `scripts/27-repair-installed-modules.sh` — detect/remove broken installed NVIDIA module files, rebuild DKMS, depmod, initramfs, and verify `nvidia-smi`
@@ -55,6 +73,15 @@ Safe Debian-focused diagnostics, Secure Boot / MOK signing helpers, corrupted-mo
 - `scripts/run-recovery.sh` — guided recovery flow
 - `scripts/menu.sh` — terminal UI menu using `whiptail`
 - `helpers/common.sh` — shared helpers
+
+## Safest remediation order for your machine
+
+Recommended order for RTX 5070 Ti on Debian Trixie:
+1. Debian stable packages
+2. Debian backports packages
+3. NVIDIA official Debian repo (documented `cuda-keyring` path)
+
+This matches your priority for accurate diagnosis and fast remediation while still keeping Debian/backports preferred first.
 
 ## What changed for Debian module naming
 
@@ -72,7 +99,7 @@ So signing, repair, and verification no longer assume only one filename pattern.
 
 ## Driver-too-old detection
 
-The project now checks both:
+The project checks both:
 - package-version heuristics, for example older than 570 for RTX 50 / Blackwell-era GPUs
 - kernel log messages like:
   - `not supported by the NVIDIA ... driver release`
@@ -107,7 +134,9 @@ Menu features:
 - full recovery flow
 - target-kernel build/sign/verify flows
 - backports remediation helper
+- NVIDIA official repo remediation helper
 - dedicated “driver too old” help screen
+- dedicated NVIDIA repo help screen
 
 The menu writes a summary log under `logs/` and each called script still writes its own log too.
 
@@ -152,7 +181,7 @@ Or use:
 Recommended order:
 1. Try Debian backports first
 2. Re-run diagnostics and verification
-3. Only consider external/upstream NVIDIA packaging if Debian/backports still lacks support
+3. If still unsupported, use NVIDIA’s documented Debian repo path
 
 ### Automatic backports helper
 
@@ -160,17 +189,30 @@ Recommended order:
 sudo ./scripts/16-switch-to-backports.sh
 ```
 
-This installs the NVIDIA stack from `trixie-backports` if available.
-
-### Manual backports example
+### Automatic NVIDIA official repo helper
 
 ```bash
-sudo apt-get install -t trixie-backports nvidia-driver nvidia-kernel-dkms nvidia-driver-libs nvidia-smi nvidia-settings
+sudo ./scripts/17-switch-to-nvidia-official-repo.sh
 ```
 
-### Upstream/external guidance
+By default, this helper:
+- configures NVIDIA’s documented Debian **network repository** using `cuda-keyring`
+- purges conflicting Debian NVIDIA packages first
+- installs NVIDIA packages automatically with apt
+- reuses the project’s existing MOK/signing, target-kernel, and verification flows afterward
 
-The project provides guidance only. It does **not** automatically switch you to upstream `.run` or external NVIDIA packaging, because mixing packaging methods often breaks Debian DKMS setups.
+Optional mode to keep existing packages while adding the repo:
+
+```bash
+sudo ./scripts/17-switch-to-nvidia-official-repo.sh --keep-existing-packages
+```
+
+## NVIDIA official repo tradeoffs
+
+- safer than using the `.run` installer because it stays apt-based
+- still a different package source from Debian stable/backports
+- mixing package sources can complicate DKMS and upgrades
+- purging conflicting Debian NVIDIA packages first is recommended when switching
 
 ## Target kernel workflow
 
@@ -206,7 +248,7 @@ The target-kernel workflow will:
 1. require an explicit target kernel version
 2. automatically install the target kernel package if apt has it and it is missing
 3. automatically install matching headers if missing
-4. reinstall the Debian NVIDIA package stack
+4. reinstall the NVIDIA package stack
 5. rebuild DKMS modules for the target kernel
 6. optionally sign the installed modules
 7. run `depmod` for the target kernel
@@ -230,7 +272,7 @@ sudo ./scripts/27-repair-installed-modules.sh
 This will:
 1. inspect `/lib/modules/<kernel>/updates/dkms/`
 2. remove broken installed NVIDIA modules for the selected kernel
-3. reinstall Debian NVIDIA DKMS-related packages
+3. reinstall NVIDIA DKMS-related packages
 4. rebuild DKMS modules
 5. run `depmod`
 6. rebuild initramfs
