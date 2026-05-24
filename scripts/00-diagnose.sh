@@ -71,11 +71,14 @@ journalctl -k -b 0 | grep -Ei 'secure|lockdown|nvidia|module verification|mok|no
 log "nvidia-smi presence/package status:"
 print_nvidia_smi_status
 
+log "DKMS MOK enrollment status:"
+print_dkms_mok_status
+
 log "nvidia-smi runtime check:"
 if command_exists nvidia-smi; then
   nvidia-smi || true
 else
-  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing or split into a separate package."
+  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing, or the repo may ship nvidia-smi as a transitional package."
 fi
 
 log "Diagnostics complete. Log saved to $LOG_FILE"

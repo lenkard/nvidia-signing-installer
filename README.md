@@ -199,6 +199,7 @@ By default, this helper:
 - configures NVIDIA’s documented Debian **network repository** using `cuda-keyring`
 - purges conflicting Debian NVIDIA packages first
 - installs NVIDIA packages automatically with apt
+- accounts for NVIDIA repo behavior where `nvidia-smi` may be a **transitional package** and `/usr/bin/nvidia-smi` is instead provided by `nvidia-driver-cuda`
 - reuses the project’s existing MOK/signing, target-kernel, and verification flows afterward
 
 Optional mode to keep existing packages while adding the repo:
@@ -213,6 +214,7 @@ sudo ./scripts/17-switch-to-nvidia-official-repo.sh --keep-existing-packages
 - still a different package source from Debian stable/backports
 - mixing package sources can complicate DKMS and upgrades
 - purging conflicting Debian NVIDIA packages first is recommended when switching
+- on Secure Boot systems, DKMS may sign with `/var/lib/dkms/mok.pub`; if that key is not enrolled, the kernel will reject the modules until you import it with `mokutil` and reboot
 
 ## Target kernel workflow
 

@@ -42,11 +42,14 @@ lsmod | grep '^nvidia' || true
 log "nvidia-smi presence/package status:"
 print_nvidia_smi_status
 
+log "DKMS MOK enrollment status:"
+print_dkms_mok_status
+
 log "nvidia-smi runtime check:"
 if command_exists nvidia-smi; then
   nvidia-smi || true
 else
-  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing or split into a separate package."
+  warn "nvidia-smi not found. NVIDIA userspace utilities may be missing, or the repo may ship nvidia-smi as a transitional package."
 fi
 
 log "Recent relevant kernel messages:"

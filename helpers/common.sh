@@ -323,12 +323,25 @@ print_nvidia_smi_status() {
   printf 'nvidia-smi package installed=%s candidate=%s\n' "$(installed_package_version nvidia-smi)" "$(apt_candidate_version nvidia-smi)"
 }
 
+nvidia_smi_package_is_transitional() {
+  apt-cache show nvidia-smi 2>/dev/null | grep -q 'Transitional dummy package'
+}
+
 install_optional_nvidia_smi_package() {
   local candidate
   candidate="$(apt_candidate_version nvidia-smi || true)"
+  if command_exists nvidia-smi; then
+    log "nvidia-smi already present"
+    return 0
+  fi
   if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-    log "Installing nvidia-smi package: $candidate"
-    apt-get install -y nvidia-smi
+    if nvidia_smi_package_is_transitional; then
+      warn "nvidia-smi package is transitional in this repository; installing nvidia-driver-cuda to provide /usr/bin/nvidia-smi"
+      apt-get install -y nvidia-driver-cuda
+    else
+      log "Installing nvidia-smi package: $candidate"
+      apt-get install -y nvidia-smi
+    fi
   else
     warn "No separate nvidia-smi apt candidate found; relying on current package set"
   fi
@@ -473,11 +486,37 @@ install_nvidia_from_official_repo() {
   fi
 }
 
+dkms_mok_enrolled_verdict() {
+  local pub fingerprint enrolled
+  pub="/var/lib/dkms/mok.pub"
+  [[ -f "$pub" ]] || { echo "missing-dkms-mok-pub"; return 0; }
+  fingerprint="$(openssl x509 -inform DER -in "$pub" -fingerprint -sha1 -noout 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')"
+  enrolled="$(mokutil --list-enrolled 2>/dev/null | sed -n 's/^SHA1 Fingerprint: //p' | tr '[:upper:]' '[:lower:]')"
+  if grep -q "$fingerprint" <<<"$enrolled"; then
+    echo "enrolled"
+  else
+    echo "not-enrolled"
+  fi
+}
+
+print_dkms_mok_status() {
+  local verdict pub
+  pub="/var/lib/dkms/mok.pub"
+  verdict="$(dkms_mok_enrolled_verdict)"
+  echo "dkms_mok_pub: $pub"
+  echo "dkms_mok_enrollment: $verdict"
+  if [[ "$verdict" == "not-enrolled" ]]; then
+    warn "DKMS signed modules are using a key that is not enrolled in MOK; Secure Boot will reject the modules until you import /var/lib/dkms/mok.pub and reboot."
+  fi
+}
+
 print_external_nvidia_guidance() {
   cat <<'MSG'
 NVIDIA documented Debian repo guidance:
 - Preferred order for this project: Debian stable -> Debian backports -> NVIDIA official Debian repo.
 - Use NVIDIA's documented network repository enablement with cuda-keyring on Debian 12/13.
+- For desktop/proprietary setups, NVIDIA documents nvidia-driver + nvidia-kernel-dkms.
+- In NVIDIA's repo, the nvidia-smi package may be transitional; /usr/bin/nvidia-smi can come from nvidia-driver-cuda.
 - Prefer one packaging source at a time; purge conflicting Debian NVIDIA packages before switching sources when possible.
 - Avoid mixing Debian-packaged NVIDIA with upstream .run installations.
 MSG

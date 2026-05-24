@@ -16,6 +16,8 @@ log "Post-install package matrix"
 print_nvidia_package_matrix
 log "Post-install nvidia-smi status"
 print_nvidia_smi_status
+log "Post-install DKMS MOK enrollment status"
+print_dkms_mok_status
 log "Post-install GPU/driver support assessment"
 print_driver_support_assessment
 print_external_nvidia_guidance
@@ -26,7 +28,7 @@ NVIDIA official repo remediation complete.
 Recommended next steps:
 - Re-run diagnostics:
     ./scripts/00-diagnose.sh
-- If Secure Boot is enabled, use the existing MOK/signing flow.
+- If Secure Boot is enabled and DKMS MOK is not enrolled, import /var/lib/dkms/mok.pub with mokutil and reboot.
 - If you want modules for another kernel, use the existing target-kernel workflow.
 
 Log saved to: $LOG_FILE
