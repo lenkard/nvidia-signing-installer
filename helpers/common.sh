@@ -258,13 +258,20 @@ nvidia_pkg_major_warning() {
   fi
 }
 
-likely_gpu_requires_newer_branch() {
+is_blackwell_gpu() {
   local id
   while IFS= read -r id; do
     case "$id" in
-      10de:2c05) return 0 ;;
+      10de:2c05|10de:2c02|10de:2bb4) return 0 ;;
     esac
   done < <(gpu_pci_ids)
+  return 1
+}
+
+likely_gpu_requires_newer_branch() {
+  if is_blackwell_gpu; then
+    return 0
+  fi
   return 1
 }
 
@@ -293,8 +300,12 @@ print_driver_support_assessment() {
   installed="$(installed_package_version nvidia-driver)"
   ids="$(gpu_pci_ids | tr '\n' ' ')"
   echo "detected_gpu_pci_ids: ${ids:-none}"
+  echo "detected_blackwell_gpu: $(is_blackwell_gpu && echo yes || echo no)"
   echo "installed_nvidia_driver: ${installed:-none}"
   echo "driver_support_verdict: $verdict"
+  if is_blackwell_gpu; then
+    echo "preferred_kernel_module_path: open"
+  fi
   case "$verdict" in
     too-old-heuristic|unsupported-by-kernel-log)
       warn "Packages installed successfully, but this driver branch does not support your GPU."
@@ -518,12 +529,25 @@ print_dkms_mok_status() {
   fi
 }
 
+install_nvidia_open_stack() {
+  require_root
+  apt-get install -y nvidia-driver nvidia-kernel-open-dkms nvidia-settings
+  install_optional_nvidia_smi_package
+}
+
+install_nvidia_proprietary_stack() {
+  require_root
+  apt-get install -y nvidia-driver nvidia-kernel-dkms nvidia-settings
+  install_optional_nvidia_smi_package
+}
+
 print_external_nvidia_guidance() {
   cat <<'MSG'
 NVIDIA documented Debian repo guidance:
 - Preferred order for this project: Debian stable -> Debian backports -> NVIDIA official Debian repo.
 - Use NVIDIA's documented network repository enablement with cuda-keyring on Debian 12/13.
-- For desktop/proprietary setups, NVIDIA documents nvidia-driver + nvidia-kernel-dkms.
+- For Blackwell GPUs, prefer NVIDIA open kernel modules.
+- For desktop/proprietary setups, NVIDIA documents nvidia-driver + nvidia-kernel-dkms, but Blackwell should prefer nvidia-kernel-open-dkms.
 - In NVIDIA's repo, the nvidia-smi package may be transitional; /usr/bin/nvidia-smi can come from nvidia-driver-cuda.
 - Prefer one packaging source at a time; purge conflicting Debian NVIDIA packages before switching sources when possible.
 - Avoid mixing Debian-packaged NVIDIA with upstream .run installations.

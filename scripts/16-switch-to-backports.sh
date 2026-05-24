@@ -12,6 +12,10 @@ fi
 
 log "Backports NVIDIA candidate detected: $bp_ver"
 log "Current installed nvidia-driver: $(installed_package_version nvidia-driver)"
+if is_blackwell_gpu; then
+  warn "Blackwell GPU detected. Backports proprietary path is not preferred; use NVIDIA official repo open modules if backports is still too old."
+fi
+
 log "Installing NVIDIA stack from trixie-backports"
 install_nvidia_from_backports
 

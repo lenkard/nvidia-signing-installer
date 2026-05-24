@@ -31,11 +31,15 @@ prompt_kernel() {
 }
 
 show_help() {
-  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA module files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 12\n- For a newly installed kernel: 13 (build/sign/verify for target kernel)\n- If the driver branch is too old for the GPU: 10 (switch to backports)\n- Diagnostics and verification also detect GPU/driver incompatibility and check whether nvidia-smi is installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 24 95
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Use this menu for Debian NVIDIA Secure Boot setup and recovery.\n\nRecommended flows:\n- First-time setup: 1 -> 2 -> 3 -> 4\n- If installed NVIDIA module files are corrupt: 8\n- Recovery after wrong MOK password or broken signing: 9 or 12\n- For a newly installed kernel: 13 (build/sign/verify for target kernel)\n- If the driver branch is too old for the GPU: 10 (switch to backports)\n- For Blackwell GPUs, the project prefers NVIDIA open kernel modules automatically\n- Diagnostics and verification also detect GPU/driver incompatibility and check whether nvidia-smi is installed\n\nManual firmware step always required after MOK import:\nReboot and complete MOK enrollment in the blue screen." 25 95
 }
 
 show_driver_too_old_help() {
-  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "If the project reports: 'Packages installed successfully, but this driver branch does not support your GPU', the Debian stable branch is too old for your GPU.\n\nRecommended order:\n1. Try Debian backports first\n2. Re-run diagnostics and verification\n3. If still unsupported, use NVIDIA's documented Debian repo path\n\nThe menu can run both remediation paths automatically if selected." 22 95
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "If the project reports: 'Packages installed successfully, but this driver branch does not support your GPU', the Debian stable branch is too old for your GPU.\n\nRecommended order:\n1. Try Debian backports first\n2. Re-run diagnostics and verification\n3. If still unsupported, use NVIDIA's documented Debian repo path\n\nFor Blackwell GPUs, the project prefers open kernel modules and will steer you to that path automatically." 22 95
+}
+
+show_blackwell_help() {
+  whiptail --title "$TITLE" --backtitle "$BACKTITLE" --scrolltext --msgbox "Blackwell guidance:\n- The project detects known Blackwell PCI IDs and log/version heuristics\n- For Blackwell, helpers prefer NVIDIA open kernel modules automatically\n- AI/CUDA workloads can still work with open kernel modules because the NVIDIA user-space CUDA driver stack remains usable\n- Proprietary kernel module attempts on Blackwell should be considered unsupported unless you explicitly force them outside this project" 22 95
 }
 
 show_nvidia_repo_help() {
@@ -43,7 +47,7 @@ show_nvidia_repo_help() {
 }
 
 while true; do
-  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 30 110 20 \
+  choice=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Choose an action" 31 110 21 \
     "1" "Diagnose current system" \
     "2" "Install Debian prerequisites" \
     "3" "Install Debian NVIDIA driver" \
@@ -57,12 +61,13 @@ while true; do
     "11" "Remediation: switch to NVIDIA official Debian repo" \
     "12" "Remediation: show 'driver too old' help" \
     "13" "Remediation: show NVIDIA repo help" \
-    "14" "Guided recovery flow" \
-    "15" "Target kernel: build + sign + depmod + initramfs + verify" \
-    "16" "Target kernel: verify only" \
-    "17" "Guided first-time flow" \
-    "18" "Help" \
-    "19" "Exit" 3>&1 1>&2 2>&3) || exit 0
+    "14" "Help: Blackwell + open modules" \
+    "15" "Guided recovery flow" \
+    "16" "Target kernel: build + sign + depmod + initramfs + verify" \
+    "17" "Target kernel: verify only" \
+    "18" "Guided first-time flow" \
+    "19" "Help" \
+    "20" "Exit" 3>&1 1>&2 2>&3) || exit 0
 
   case "$choice" in
     1) run_script "Diagnostics" "$PROJECT_DIR/scripts/00-diagnose.sh" ;;
@@ -116,12 +121,13 @@ while true; do
       ;;
     12) show_driver_too_old_help ;;
     13) show_nvidia_repo_help ;;
-    14)
+    14) show_blackwell_help ;;
+    15)
       if confirm "Guided recovery will purge/reinstall NVIDIA, repair installed modules, and start fresh MOK setup. Continue?"; then
         run_script "Guided recovery flow" "$PROJECT_DIR/scripts/run-recovery.sh"
       fi
       ;;
-    15)
+    16)
       kernel="$(prompt_kernel)" || continue
       mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Signing mode for $kernel" 14 80 3 \
         "signed" "Build and sign (requires MOK files)" \
@@ -133,7 +139,7 @@ while true; do
         *) ;;
       esac
       ;;
-    16)
+    17)
       kernel="$(prompt_kernel)" || continue
       mode=$(whiptail --title "$TITLE" --backtitle "$BACKTITLE" --menu "Verification mode for $kernel" 14 80 3 \
         "signed" "Require signer fields" \
@@ -145,8 +151,8 @@ while true; do
         *) ;;
       esac
       ;;
-    17) run_script "Guided first-time flow" "$PROJECT_DIR/scripts/run-all.sh" ;;
-    18) show_help ;;
-    19) exit 0 ;;
+    18) run_script "Guided first-time flow" "$PROJECT_DIR/scripts/run-all.sh" ;;
+    19) show_help ;;
+    20) exit 0 ;;
   esac
 done

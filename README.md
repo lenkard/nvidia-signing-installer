@@ -20,6 +20,21 @@ This project implements the **documented Debian network repository path** and ke
 Source used:
 - https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/latest/debian.html
 
+## Blackwell default behavior
+
+For Blackwell GPUs, this project now prefers **open kernel modules by default**.
+
+That means:
+- helpers detect known Blackwell PCI IDs and supporting heuristics
+- standard install helpers automatically prefer the open kernel module path
+- menu/help text explains the preference
+- proprietary attempts are treated as unsupported for Blackwell inside normal project flows
+
+Small AI/CUDA note:
+- open kernel modules still work with NVIDIA’s user-space CUDA driver stack
+- PyTorch, TensorFlow, Ollama, Docker CUDA, and general CUDA workloads can still work with the open kernel module path
+- this does **not** require installing the full CUDA toolkit just to use the GPU driver stack
+
 ## Goals
 
 - Diagnose common NVIDIA-on-Debian failures
@@ -27,6 +42,7 @@ Source used:
 - Detect corrupted installed NVIDIA kernel modules like `.ko.xz`
 - Verify that the installed package set actually provides `nvidia-smi`
 - Detect when packages are installed successfully but the installed NVIDIA branch is too old for the GPU
+- Prefer open kernel modules automatically for Blackwell GPUs
 - Install Debian prerequisites and Debian-packaged NVIDIA drivers
 - Create and enroll a MOK key for module signing
 - Re-sign NVIDIA modules for the current kernel
@@ -51,6 +67,7 @@ Source used:
 - Replacing old local MOK key files requires confirmation
 - Target-kernel workflows require an explicit target kernel argument
 - Driver-too-old detection warns clearly but does not hard-stop every workflow
+- Blackwell GPUs automatically prefer open kernel modules in helpers
 - The project supports only NVIDIA’s **documented Debian repo path** as external remediation
 - The project does **not** use NVIDIA's `.run` installer automatically
 - The project does **not** silently change BIOS/UEFI settings
@@ -59,9 +76,10 @@ Source used:
 
 - `scripts/00-diagnose.sh` — current-system diagnostics, `.ko.xz` health, `nvidia-smi`, GPU PCI IDs, and driver support assessment
 - `scripts/10-install-debian-prereqs.sh` — install Debian prerequisites, including `whiptail`
-- `scripts/15-install-nvidia-driver.sh` — install Debian-packaged NVIDIA driver and warn if the branch is too old for the GPU
+- `scripts/15-install-nvidia-driver.sh` — install Debian-packaged NVIDIA driver; automatically prefers open kernel modules on Blackwell
 - `scripts/16-switch-to-backports.sh` — switch/install NVIDIA packages from `trixie-backports`
-- `scripts/17-switch-to-nvidia-official-repo.sh` — configure NVIDIA’s documented Debian repo and install newer NVIDIA packages automatically
+- `scripts/17-switch-to-nvidia-official-repo.sh` — configure NVIDIA’s documented Debian repo and install newer NVIDIA packages automatically; prefers open kernel modules on Blackwell
+- `scripts/18-blackwell-open-install.sh` — explicit Blackwell/open-kernel-module helper
 - `scripts/20-create-or-enroll-mok.sh` — create/import MOK; supports `--fresh`
 - `scripts/25-recover.sh` — recovery flow: purge/reinstall driver + repair installed modules + fresh MOK setup
 - `scripts/27-repair-installed-modules.sh` — detect/remove broken installed NVIDIA module files, rebuild DKMS, depmod, initramfs, and verify `nvidia-smi`
@@ -74,14 +92,24 @@ Source used:
 - `scripts/menu.sh` — terminal UI menu using `whiptail`
 - `helpers/common.sh` — shared helpers
 
+## Detection used for Blackwell preference
+
+The project uses both:
+- explicit known PCI IDs
+- heuristics based on logs and driver-version support checks
+
+Known explicit examples currently include:
+- `10de:2c05` (RTX 5070 Ti)
+- selected other IDs as rules are added
+
 ## Safest remediation order for your machine
 
 Recommended order for RTX 5070 Ti on Debian Trixie:
 1. Debian stable packages
 2. Debian backports packages
-3. NVIDIA official Debian repo (documented `cuda-keyring` path)
+3. NVIDIA official Debian repo
 
-This matches your priority for accurate diagnosis and fast remediation while still keeping Debian/backports preferred first.
+If a Blackwell GPU is detected, the project prefers the **open kernel module** path within those supported packaging sources.
 
 ## What changed for Debian module naming
 
@@ -106,8 +134,10 @@ The project checks both:
 
 It also logs:
 - detected GPU PCI IDs
+- whether a Blackwell GPU was detected
 - installed NVIDIA driver version
 - support verdict
+- preferred kernel module path
 - remediation guidance
 
 When this condition is detected, the project explicitly says:
@@ -137,6 +167,7 @@ Menu features:
 - NVIDIA official repo remediation helper
 - dedicated “driver too old” help screen
 - dedicated NVIDIA repo help screen
+- dedicated Blackwell + open-kernel-modules help screen
 
 The menu writes a summary log under `logs/` and each called script still writes its own log too.
 
@@ -176,6 +207,14 @@ Or use:
 ./scripts/run-all.sh
 ```
 
+## Explicit Blackwell open-module helper
+
+```bash
+sudo ./scripts/18-blackwell-open-install.sh
+```
+
+Use this if you already know the machine is Blackwell and want the clearest direct path.
+
 ## If Debian stable NVIDIA is too old for your GPU
 
 Recommended order:
@@ -201,6 +240,7 @@ By default, this helper:
 - installs NVIDIA packages automatically with apt
 - accounts for NVIDIA repo behavior where `nvidia-smi` may be a **transitional package** and `/usr/bin/nvidia-smi` is instead provided by `nvidia-driver-cuda`
 - reuses the project’s existing MOK/signing, target-kernel, and verification flows afterward
+- automatically prefers open kernel modules for Blackwell
 
 Optional mode to keep existing packages while adding the repo:
 

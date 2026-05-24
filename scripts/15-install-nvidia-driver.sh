@@ -23,15 +23,25 @@ if [[ "$mode" == "purge-reinstall" ]]; then
   apt-get autoremove -y || true
 fi
 
-log "Installing Debian-packaged NVIDIA driver stack"
-apt-get install -y nvidia-driver firmware-misc-nonfree dkms linux-headers-$(uname -r)
-install_optional_nvidia_smi_package
+if is_blackwell_gpu; then
+  warn "Blackwell GPU detected. Automatically preferring open kernel modules."
+  apt-get install -y firmware-misc-nonfree dkms linux-headers-$(uname -r)
+  install_nvidia_open_stack
+else
+  log "Installing Debian-packaged NVIDIA driver stack"
+  apt-get install -y nvidia-driver firmware-misc-nonfree dkms linux-headers-$(uname -r)
+  install_optional_nvidia_smi_package
+fi
 
 log "Post-install nvidia-smi status"
 print_nvidia_smi_status
 log "Post-install GPU/driver support assessment"
 print_driver_support_assessment
 verdict="$(driver_support_verdict)"
+if is_blackwell_gpu; then
+  warn "For Blackwell GPUs, open kernel modules are the preferred path and are selected automatically by this helper."
+fi
+
 if [[ "$verdict" == "too-old-heuristic" || "$verdict" == "unsupported-by-kernel-log" ]]; then
   warn "Packages installed successfully, but this driver branch does not support your GPU."
   bp_ver="$(apt_package_version_from_suite nvidia-driver 'trixie-backports/.*/non-free')"

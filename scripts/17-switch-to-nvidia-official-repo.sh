@@ -10,7 +10,18 @@ if [[ "${1:-}" == "--keep-existing-packages" ]]; then
 fi
 
 log "Configuring NVIDIA official Debian repo according to NVIDIA documentation"
-install_nvidia_from_official_repo "$purge_first"
+if is_blackwell_gpu; then
+  log "Blackwell GPU detected. Installing NVIDIA official repo with open kernel modules preferred."
+  if [[ "$purge_first" == "yes" ]]; then
+    log "Purging Debian NVIDIA packages before switching to NVIDIA official repo"
+    apt-get purge -y 'nvidia-*' 'libnvidia-*' 'xserver-xorg-video-nvidia*' || true
+    apt-get autoremove -y || true
+  fi
+  configure_nvidia_official_network_repo
+  install_nvidia_open_stack
+else
+  install_nvidia_from_official_repo "$purge_first"
+fi
 
 log "Post-install package matrix"
 print_nvidia_package_matrix
