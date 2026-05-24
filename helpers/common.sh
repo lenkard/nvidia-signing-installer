@@ -157,8 +157,16 @@ xz_module_is_valid() {
 }
 
 modinfo_file_works() {
-  local p="$1"
+  local p="$1" tmp
   [[ -e "$p" ]] || return 1
+  if [[ "$p" == *.xz ]]; then
+    tmp="$(mktemp --suffix=.ko)"
+    xz -dc "$p" > "$tmp" || { rm -f "$tmp"; return 1; }
+    modinfo "$tmp" >/dev/null 2>&1
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+  fi
   modinfo "$p" >/dev/null 2>&1
 }
 
